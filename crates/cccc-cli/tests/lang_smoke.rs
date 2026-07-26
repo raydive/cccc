@@ -81,6 +81,11 @@ fn kotlin_fixture_dispatches() {
 }
 
 #[test]
+fn scala_fixture_dispatches() {
+    assert_sum_of_primes("sample.scala", "sumOfPrimes");
+}
+
+#[test]
 fn python_fixture_dispatches() {
     assert_sum_of_primes("sample.py", "sum_of_primes");
 }

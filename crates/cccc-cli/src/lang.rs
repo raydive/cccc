@@ -95,6 +95,12 @@ pub const LANGUAGES: &[Language] = &[
         analyze: cccc_kt::analyze_source,
     },
     Language {
+        name: "scala",
+        aliases: &["sc"],
+        exts: cccc_scala::DEFAULT_EXTS,
+        analyze: cccc_scala::analyze_source,
+    },
+    Language {
         name: "python",
         aliases: &["py"],
         exts: cccc_py::DEFAULT_EXTS,
@@ -294,6 +300,7 @@ mod tests {
                 "emacslisp".to_string(),
                 "clojure".to_string(),
                 "kotlin".to_string(),
+                "scala".to_string(),
                 "python".to_string(),
                 "zig".to_string(),
                 "c".to_string(),
@@ -340,7 +347,7 @@ mod tests {
         let map = build_dispatch(&all, &BTreeMap::new());
         for key in [
             "ts", "rs", "go", "php", "rb", "scm", "lisp", "el", "clj", "kt", "kts", "py", "pyi",
-            "zig", "c", "h", "pl", "pm", "t", "swift", "java", "dart",
+            "scala", "zig", "c", "h", "pl", "pm", "t", "swift", "java", "dart",
         ] {
             assert!(map.contains_key(key), "missing dispatch for .{key}");
         }
@@ -373,6 +380,7 @@ mod tests {
     fn canonical_name_resolves_aliases() {
         assert_eq!(canonical_name("ts"), Some("es"));
         assert_eq!(canonical_name("RUST"), Some("rust"));
+        assert_eq!(canonical_name("sc"), Some("scala"));
         assert_eq!(canonical_name("cobol"), None);
     }
 

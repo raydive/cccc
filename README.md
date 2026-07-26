@@ -28,6 +28,9 @@
     [exoego/tree-sitter-kotlin](https://github.com/exoego/tree-sitter-kotlin)
     grammar (a fork of the fwcd tree-sitter Kotlin grammar with fixes for
     modern-Kotlin constructs). Analyzes `.kt`, `.kts`.
+  - **Scala** (`--lang scala`), via the official
+    [tree-sitter-scala](https://github.com/tree-sitter/tree-sitter-scala)
+    grammar, covering Scala 2 and Scala 3. Analyzes `.scala`.
   - **Python** (`--lang python`), via the official
     [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
     grammar. Analyzes `.py`, `.pyi`.
@@ -70,6 +73,7 @@ library and extended to other languages:
 | [`cccc-clojure`](crates/cccc-clojure) | Clojure adapter **library**: lowers the [lispexp](https://docs.rs/lispexp) S-expression tree into `cccc-core`'s IR. Depends only on `cccc-core` + lispexp (pure Rust) — **no CLI dependencies**. |
 | [`cccc-scheme`](crates/cccc-scheme) | Scheme (R7RS-small) adapter **library**: lowers the [lispexp](https://docs.rs/lispexp) S-expression tree into `cccc-core`'s IR. Depends only on `cccc-core` + lispexp (pure Rust) — **no CLI dependencies**. |
 | [`cccc-kt`](crates/cccc-kt) | Kotlin adapter **library**: lowers the [exoego/tree-sitter-kotlin](https://github.com/exoego/tree-sitter-kotlin) CST into `cccc-core`'s IR. Depends only on `cccc-core` + tree-sitter + the Kotlin grammar — **no CLI dependencies**. Note: the grammar ships C source compiled by `cc`, so building this crate needs a C compiler (but not libclang, unlike `cccc-rb`). |
+| [`cccc-scala`](crates/cccc-scala) | Scala 2/3 adapter **library**: lowers the official [tree-sitter-scala](https://github.com/tree-sitter/tree-sitter-scala) CST into `cccc-core`'s IR. Depends only on `cccc-core` + tree-sitter + the Scala grammar — **no CLI dependencies**. The grammar's C source is compiled by `cc`, so building needs a C compiler but not libclang. |
 | [`cccc-py`](crates/cccc-py) | Python adapter **library**: lowers the official [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python) CST into `cccc-core`'s IR. Depends only on `cccc-core` + tree-sitter + the Python grammar — **no CLI dependencies**. Like `cccc-kt`, the grammar's C source is compiled by `cc`, so building needs a C compiler (no libclang). |
 | [`cccc-zig`](crates/cccc-zig) | Zig adapter **library**: lowers the pure-Rust [zigsyn](https://docs.rs/zigsyn) AST into `cccc-core`'s IR. Depends only on `cccc-core` + zigsyn — **no CLI dependencies or C toolchain**. |
 | [`cccc-c`](crates/cccc-c) | C adapter **library**: lowers the official [tree-sitter-c](https://github.com/tree-sitter/tree-sitter-c) CST into `cccc-core`'s IR. Depends only on `cccc-core` + tree-sitter + the C grammar — **no CLI dependencies**. Like `cccc-kt`/`cccc-py`, the grammar's C source is compiled by `cc`, so building needs a C compiler (no libclang). |
@@ -88,7 +92,7 @@ To support another language: (1) add an adapter crate that lowers its AST into
 it with one entry in `cccc-cli`'s `lang::LANGUAGES` (and add the dependency) —
 no new binary, and no reimplementing the metrics or the CLI. `cccc-es` (oxc),
 `cccc-rs` (syn), `cccc-go` (gosyn), `cccc-php` (php-rs-parser), `cccc-rb`
-(ruby-prism), `cccc-kt` / `cccc-py` / `cccc-pl` (tree-sitter), `cccc-swift` (tree-sitter), `cccc-c` (tree-sitter),
+(ruby-prism), `cccc-kt` / `cccc-scala` / `cccc-py` / `cccc-pl` (tree-sitter), `cccc-swift` (tree-sitter), `cccc-c` (tree-sitter),
 `cccc-java` (tree-sitter), `cccc-dart` (tree-sitter), `cccc-scheme` (lispexp), `cccc-clojure` (lispexp), `cccc-lisp` (lispexp, Common Lisp / Emacs Lisp / …),
 and `cccc-zig` (zigsyn) are the reference adapters: same shape, different parser.
 The Lisp-family adapters share their lowering skeleton via `cccc-lisp-kit`.
@@ -500,6 +504,21 @@ a subject (its `else` entry is the non-decision `default` arm), `for`/`while`/
 to the corresponding nodes. The elvis operator `?:` folds as a coalescing run
 (like PHP's `??`). Kotlin has no C-style ternary — `if` is already an
 expression. Each safe-navigation operator (`?.`) adds one cyclomatic path.
+
+For **Scala** (`--lang scala`): body-bearing `def` declarations (top-level,
+methods, and local functions) and lambdas are function-like units; abstract
+`def` declarations are omitted because they have no executable body.
+`if`/`else if`/`else` chains flat through the alternate arm, `match` becomes a
+switch (only an unguarded `case _` is the non-decision default), and
+`while`/`do`-`while`/`for` become loops. A for-comprehension is one syntactic
+loop; its enumerator guards are traversed but do not add a separate branch.
+Each pattern handler inside `catch` is a catch decision point, while the `try`
+and `finally` containers themselves are transparent and their contents still
+score at the surrounding level. Runs of `&&` and `||` follow the shared logical
+sequence rules, and calls participate in recursion detection. Scala has no
+built-in null-safe navigation, null-coalescing operator, or labelled
+`break`/`continue`, so this adapter emits no `NullGuard`, `Coalesce`, or `Jump`
+nodes for library-level equivalents.
 
 For **Python** (`--lang python`): `def` (incl. `async def` and decorated
 definitions) / methods / `lambda` are the function-like units;
