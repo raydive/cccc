@@ -6,11 +6,12 @@
 //! visits every named child. Unrecognized Scala syntax is therefore transparent
 //! rather than discarded, preserving nested functions and control flow.
 //!
-//! The adapter maps body-bearing `def`s and lambdas to [`Node::Function`],
-//! `if` to [`Node::Branch`], `match` to [`Node::Switch`], loops to
-//! [`Node::Loop`], catch handlers to [`Node::Catch`], `&&`/`||` runs to folded
-//! [`Node::Logical`] values, and calls to [`Node::Call`]. `try` and `finally`
-//! are transparent containers. Abstract `def` declarations are not reported.
+//! The adapter maps body-bearing `def`s, lambdas, and partial-function literals
+//! to [`Node::Function`], `if` to [`Node::Branch`], `match` and partial-function
+//! cases to [`Node::Switch`], loops to [`Node::Loop`], catch handlers to
+//! [`Node::Catch`], `&&`/`||` runs to folded [`Node::Logical`] values, and calls
+//! to [`Node::Call`]. `try` and `finally` are transparent containers. Abstract
+//! `def` declarations are not reported.
 
 use std::path::Path;
 
@@ -138,6 +139,7 @@ impl<'a> Builder<'a> {
                 self.emit(Node::Loop { body });
             }
             "match_expression" => self.visit_match(node),
+            "case_block" | "indented_cases" => self.visit_partial_function(node),
             "try_expression" => self.visit_try(node),
             "infix_expression" => match self.logical_op(node) {
                 Some(op) => self.visit_logical(node, op),
@@ -179,23 +181,36 @@ impl<'a> Builder<'a> {
             self.visit(value);
         }
 
-        let mut cases = Vec::new();
-        if let Some(body) = node.child_by_field_name("body") {
-            for case in named_children(body) {
-                if case.kind() != "case_clause" {
-                    continue;
-                }
-                let is_default = case
-                    .child_by_field_name("pattern")
-                    .is_some_and(|pattern| pattern.kind() == "wildcard")
-                    && !named_children(case)
-                        .iter()
-                        .any(|child| child.kind() == "guard");
-                let body = self.collect(|builder| builder.visit_named_children(case));
-                cases.push(SwitchCase { is_default, body });
-            }
-        }
+        let cases = node
+            .child_by_field_name("body")
+            .map_or_else(Vec::new, |body| self.lower_switch_cases(body));
         self.emit(Node::Switch { cases });
+    }
+
+    fn visit_partial_function(&mut self, node: TsNode) {
+        let line = node.start_position().row as u32 + 1;
+        let cases = self.lower_switch_cases(node);
+        self.emit(Node::Function {
+            name: "<lambda>".to_string(),
+            kind: "lambda".to_string(),
+            line,
+            body: vec![Node::Switch { cases }],
+        });
+    }
+
+    fn lower_switch_cases(&mut self, node: TsNode) -> Vec<SwitchCase> {
+        let mut cases = Vec::new();
+        for case in descendant_cases(node) {
+            let is_default = case
+                .child_by_field_name("pattern")
+                .is_some_and(|pattern| pattern.kind() == "wildcard")
+                && !named_children(case)
+                    .iter()
+                    .any(|child| child.kind() == "guard");
+            let body = self.collect(|builder| builder.visit_named_children(case));
+            cases.push(SwitchCase { is_default, body });
+        }
+        cases
     }
 
     fn visit_try(&mut self, node: TsNode) {
@@ -422,6 +437,100 @@ mod tests {
     }
 
     #[test]
+    fn partial_function_argument_is_a_nested_lambda_with_a_switch() {
+        let source = r#"
+def positive(xs: List[Int]) =
+  xs.collect {
+    case x if x > 0 => x
+    case 0 => 0
+  }
+"#;
+        let report = analyze_source(Path::new("Partial.scala"), source);
+
+        assert!(report.parse_errors.is_empty(), "{:?}", report.parse_errors);
+        let outer = &report.functions[0];
+        assert_eq!(outer.name, "positive");
+        assert_eq!(outer.cognitive, 0);
+        assert_eq!(outer.cyclomatic, 1);
+        assert_eq!(outer.children.len(), 1);
+        let partial = &outer.children[0];
+        assert_eq!(partial.name, "<lambda>");
+        assert_eq!(partial.kind, "lambda");
+        assert_eq!(partial.cognitive, 1);
+        assert_eq!(partial.cyclomatic, 3);
+        assert_eq!(report.cognitive, 1);
+        assert_eq!(report.cyclomatic, 4);
+    }
+
+    #[test]
+    fn partial_function_value_uses_unguarded_wildcard_as_default() {
+        let source = r#"
+val receive = {
+  case Msg(x) => process(x)
+  case _ => ignore()
+}
+"#;
+        let report = analyze_source(Path::new("Receive.scala"), source);
+
+        assert!(report.parse_errors.is_empty(), "{:?}", report.parse_errors);
+        assert_eq!(report.functions.len(), 1);
+        let partial = &report.functions[0];
+        assert_eq!(partial.kind, "lambda");
+        assert_eq!(partial.cognitive, 1);
+        assert_eq!(partial.cyclomatic, 2);
+    }
+
+    #[test]
+    fn guarded_wildcard_in_partial_function_is_not_default() {
+        let source = r#"
+val receive = {
+  case _ if enabled => process()
+}
+"#;
+        let report = analyze_source(Path::new("GuardedReceive.scala"), source);
+
+        assert!(report.parse_errors.is_empty(), "{:?}", report.parse_errors);
+        let partial = &report.functions[0];
+        assert_eq!(partial.cognitive, 1);
+        assert_eq!(partial.cyclomatic, 2);
+    }
+
+    #[test]
+    fn control_flow_in_partial_function_case_is_nested_under_switch() {
+        let source = r#"
+val receive = {
+  case Msg(x) =>
+    if x > 0 then process(x)
+}
+"#;
+        let report = analyze_source(Path::new("NestedReceive.scala"), source);
+
+        assert!(report.parse_errors.is_empty(), "{:?}", report.parse_errors);
+        let partial = &report.functions[0];
+        assert_eq!(partial.cognitive, 3);
+        assert_eq!(partial.cyclomatic, 3);
+    }
+
+    #[test]
+    fn indented_partial_function_is_a_nested_lambda() {
+        let source = r#"
+def positive(xs: List[Int]) =
+  xs.collect:
+    case x if x > 0 => x
+    case _ => 0
+"#;
+        let report = analyze_source(Path::new("IndentedPartial.scala"), source);
+
+        assert!(report.parse_errors.is_empty(), "{:?}", report.parse_errors);
+        let outer = &report.functions[0];
+        assert_eq!(outer.children.len(), 1);
+        let partial = &outer.children[0];
+        assert_eq!(partial.kind, "lambda");
+        assert_eq!(partial.cognitive, 1);
+        assert_eq!(partial.cyclomatic, 2);
+    }
+
+    #[test]
     fn if_expression_adds_one_branch() {
         let report = analyze_source(
             Path::new("Branch.scala"),
@@ -467,6 +576,7 @@ mod tests {
         assert!(report.parse_errors.is_empty());
         assert_eq!(report.functions[0].cognitive, 1);
         assert_eq!(report.functions[0].cyclomatic, 3);
+        assert!(report.functions[0].children.is_empty());
     }
 
     #[test]
@@ -490,6 +600,7 @@ def recover() = {
         assert!(report.parse_errors.is_empty(), "{:?}", report.parse_errors);
         assert_eq!(report.functions[0].cognitive, 5);
         assert_eq!(report.functions[0].cyclomatic, 5);
+        assert!(report.functions[0].children.is_empty());
     }
 
     #[test]

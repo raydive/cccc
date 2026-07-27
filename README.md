@@ -506,8 +506,11 @@ to the corresponding nodes. The elvis operator `?:` folds as a coalescing run
 expression. Each safe-navigation operator (`?.`) adds one cyclomatic path.
 
 For **Scala** (`--lang scala`): body-bearing `def` declarations (top-level,
-methods, and local functions) and lambdas are function-like units; abstract
-`def` declarations are omitted because they have no executable body.
+methods, and local functions), lambdas, and partial-function literals such as
+`collect { case ... }` are function-like units; abstract `def` declarations are
+omitted because they have no executable body. A partial function is reported as
+a lambda containing a switch, with only an unguarded wildcard case treated as
+the default.
 `if`/`else if`/`else` chains flat through the alternate arm, `match` becomes a
 switch (only an unguarded `case _` is the non-decision default), and
 `while`/`do`-`while`/`for` become loops. A for-comprehension is one syntactic
