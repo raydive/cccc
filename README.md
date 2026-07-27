@@ -521,7 +521,10 @@ score at the surrounding level. Runs of `&&` and `||` follow the shared logical
 sequence rules, and calls participate in recursion detection. Scala has no
 built-in null-safe navigation, null-coalescing operator, or labelled
 `break`/`continue`, so this adapter emits no `NullGuard`, `Coalesce`, or `Jump`
-nodes for library-level equivalents.
+nodes for library-level equivalents. If the Scala parser reports a syntax
+error, the resulting complexity values may be lower bounds because error
+recovery can omit surrounding definitions; diagnostics include the parser's
+line and column and, when recoverable, the enclosing definition.
 
 For **Python** (`--lang python`): `def` (incl. `async def` and decorated
 definitions) / methods / `lambda` are the function-like units;

@@ -43,16 +43,25 @@ pub fn to_ir(_path: &Path, source: &str) -> (Vec<Node>, Vec<String>) {
     };
 
     let mut errors = Vec::new();
-    collect_errors(tree.root_node(), &mut errors);
+    collect_errors(tree.root_node(), source.as_bytes(), &mut errors);
 
     let mut builder = Builder::new(source.as_bytes());
     builder.visit(tree.root_node());
     (builder.finish(), errors)
 }
 
-fn collect_errors(node: TsNode, out: &mut Vec<String>) {
+fn collect_errors(node: TsNode, source: &[u8], out: &mut Vec<String>) {
     if node.is_error() || node.is_missing() {
-        let message = format!("syntax error at line {}", node.start_position().row + 1);
+        let position = node.start_position();
+        let mut message = format!(
+            "syntax error at line {}, column {}",
+            position.row + 1,
+            position.column + 1
+        );
+        if let Some(context) = error_context(node, source) {
+            message.push_str(" while parsing ");
+            message.push_str(&context);
+        }
         if !out.contains(&message) {
             out.push(message);
         }
@@ -60,8 +69,38 @@ fn collect_errors(node: TsNode, out: &mut Vec<String>) {
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_errors(child, out);
+        collect_errors(child, source, out);
     }
+}
+
+fn error_context(node: TsNode, source: &[u8]) -> Option<String> {
+    let mut ancestor = node.parent();
+    while let Some(parent) = ancestor {
+        let label = match parent.kind() {
+            "function_definition" | "function_declaration" => Some("function"),
+            "class_definition" => Some("class"),
+            "trait_definition" => Some("trait"),
+            "object_definition" => Some("object"),
+            "enum_definition" => Some("enum"),
+            "extension_definition" => Some("extension"),
+            "lambda_expression" => Some("lambda"),
+            _ => None,
+        };
+        if let Some(label) = label {
+            let name = parent
+                .child_by_field_name("name")
+                .and_then(|name| name.utf8_text(source).ok())
+                .filter(|name| !name.is_empty());
+            let subject =
+                name.map_or_else(|| label.to_string(), |name| format!("{label} '{name}'"));
+            return Some(format!(
+                "{subject} starting at line {}",
+                parent.start_position().row + 1
+            ));
+        }
+        ancestor = parent.parent();
+    }
+    None
 }
 
 struct Builder<'a> {
@@ -663,6 +702,21 @@ def decide(a: Boolean, b: Boolean, c: Boolean, d: Boolean) = {
         let report = analyze_source(Path::new("Broken.scala"), "def broken(");
 
         assert!(!report.parse_errors.is_empty());
+        assert!(report.parse_errors[0].contains("line 1, column"));
+    }
+
+    #[test]
+    fn parse_error_reports_enclosing_function_context_when_available() {
+        let source = "def broken = {\n  if then 1\n}\n";
+        let report = analyze_source(Path::new("BrokenContext.scala"), source);
+
+        assert!(!report.parse_errors.is_empty());
+        assert!(
+            report
+                .parse_errors
+                .iter()
+                .any(|error| error.contains("while parsing function 'broken' starting at line 1"))
+        );
     }
 
     #[test]
