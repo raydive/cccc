@@ -11,4 +11,4 @@ description = "Scala (tree-sitter) adapter that lowers source into the cccc-core
 [dependencies]
 cccc-core = { workspace = true }
 tree-sitter = "0.26"
-tree-sitter-scala = "0.26"
+tree-sitter-scala = "0.26.2"

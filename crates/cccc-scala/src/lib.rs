@@ -706,8 +706,8 @@ def decide(a: Boolean, b: Boolean, c: Boolean, d: Boolean) = {
     }
 
     #[test]
-    fn parse_error_reports_enclosing_function_context_when_available() {
-        let source = "def broken = {\n  if then 1\n}\n";
+    fn parse_error_reports_enclosing_definition_context_when_available() {
+        let source = "class Broken {\n  def method = if then 1\n}\n";
         let report = analyze_source(Path::new("BrokenContext.scala"), source);
 
         assert!(!report.parse_errors.is_empty());
@@ -715,7 +715,7 @@ def decide(a: Boolean, b: Boolean, c: Boolean, d: Boolean) = {
             report
                 .parse_errors
                 .iter()
-                .any(|error| error.contains("while parsing function 'broken' starting at line 1"))
+                .any(|error| error.contains("while parsing class 'Broken' starting at line 1"))
         );
     }
 
@@ -727,5 +727,47 @@ def decide(a: Boolean, b: Boolean, c: Boolean, d: Boolean) = {
         assert!(report.parse_errors.is_empty(), "{:?}", report.parse_errors);
         assert_eq!(report.functions[0].cognitive, 1);
         assert_eq!(report.functions[0].cyclomatic, 2);
+    }
+
+    #[test]
+    fn constructor_annotation_does_not_consume_class_parameter_lists() {
+        let source = r#"
+class HealthCheck @Inject() (
+  @Named("primary") val actions: Actions,
+  val fallback: Actions = defaultActions
+)(implicit ec: ExecutionContext) {
+  def check = if (actions.ready) actions.run() else actions.waitForReady()
+}
+"#;
+        let report = analyze_source(Path::new("HealthCheck.scala"), source);
+
+        assert!(report.parse_errors.is_empty(), "{:?}", report.parse_errors);
+        assert_eq!(report.functions.len(), 1);
+        assert_eq!(report.functions[0].name, "check");
+        assert_eq!(report.functions[0].kind, "method");
+        assert_eq!(report.functions[0].cognitive, 2);
+        assert_eq!(report.functions[0].cyclomatic, 2);
+    }
+
+    #[test]
+    fn multiline_for_binding_keeps_the_enclosing_function() {
+        let source = r#"
+object Values {
+  def normalize(xs: List[Int]) = for {
+    x <- xs
+    normalized =
+      if (x > 0) x
+      else 0
+  } yield normalized
+}
+"#;
+        let report = analyze_source(Path::new("Values.scala"), source);
+
+        assert!(report.parse_errors.is_empty(), "{:?}", report.parse_errors);
+        assert_eq!(report.functions.len(), 1);
+        assert_eq!(report.functions[0].name, "normalize");
+        assert_eq!(report.functions[0].kind, "method");
+        assert_eq!(report.functions[0].cognitive, 4);
+        assert_eq!(report.functions[0].cyclomatic, 3);
     }
 }
